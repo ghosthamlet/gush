@@ -35,7 +35,11 @@
   ;; List of methods that implement this generic
   (methods #:accessor .methods
            #:init-value '()
-           #:init-keyword #:methods))
+           #:init-keyword #:methods)
+  ;; How many cpu "steps" invoking this method costs
+  (cost #:init-value 1
+        #:init-keyword #:cost
+        #:getter .cost))
 
 (define-class <gush-method> ()
   ;; What "symbol" this maps to for read/write
@@ -166,20 +170,24 @@
 
 
 
-;; ;; A gush program in progress.
-;; (define-class <gusher> ()
-;;   ;; The initial program that gets put on the eval stack
-;;   (program #:init-keyword #:program
-;;            #:getter .program)
-;;
-;;   ;; @@: In the future, maybe both the value stack and eval stack
-;;   ;;   will just be stacks on the memories mapping?
-;;   ;; Maybe users will be able to "switch" what's the current eval stack
-;;   ;;   and what's the current value stack?
-;;   ;; The eval stack
-;;   (eval-stack)
-;;   (value-stack)
-;;  
-;;   ;; memories is a mapping of symbols/strings(???) -> stacks
-;;   (memories #:init-thunk make-hash-table
-;;             #:accessor .memories))
+;;; WIP
+
+;; A gush program in progress.
+(define-class <program> ()
+  ;; The initial program that gets put on the eval stack
+  (code #:init-keyword #:code
+        #:getter .code)
+
+  ;; @@: In the future, maybe both the value stack and eval stack
+  ;;   will just be stacks on the memories mapping?
+  ;; Maybe users will be able to "switch" what's the current eval stack
+  ;;   and what's the current value stack?
+  ;; That might be dangerous though.
+  (eval-stack #:init-value '()
+              #:accessor .eval-stack)
+  (value-stack #:init-value '()
+               #:accessor .value-stack)
+
+  ;; memories is a mapping of symbols/strings(???) -> stacks
+  (memories #:init-thunk make-hash-table
+            #:accessor .memories))
