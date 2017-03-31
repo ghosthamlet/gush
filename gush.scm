@@ -188,6 +188,6 @@
   (value-stack #:init-value '()
                #:accessor .value-stack)
 
-  ;; memories is a mapping of symbols/strings(???) -> stacks
+  ;; memories is a mapping of keywords -> stacks
   (memories #:init-thunk make-hash-table
             #:accessor .memories))
