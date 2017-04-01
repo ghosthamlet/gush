@@ -7,11 +7,23 @@
 ;; mapping of symbol -> <gush-generic>
 (define %gush-env (make-parameter (make-hash-table)))
 
-(define* (get-generic sym #:optional (gush-env (%gush-env)))
+(define-inlinable (get-generic sym gush-env)
   (hashq-ref gush-env sym))
 
-(define* (set-generic! sym val #:optional (gush-env (%gush-env)))
+(define-inlinable (set-generic! sym val gush-env)
   (hashq-set! gush-env sym val))
+
+(define (gush-env-add-generic! gush-env sym . args)
+  (define generic-args
+    (match args
+      (((? string? docstring) rest-args ...)
+       (cons* #:docstring docstring
+              rest-args))))
+  (define generic
+    (apply make <gush-generic>
+         #:sym sym
+         generic-args))
+  (set-generic! sym generic gush-env))
 
 (define (gush-env-add-method! gush-env gush-method)
   (let* ((sym (.sym gush-method))
@@ -22,12 +34,6 @@
     (set! (.methods generic)
           (cons gush-method (.methods generic)))))
 
-(define (gush-env-get-methods gush-env sym)
-  "Get methods for SYM"
-  (and=> (get-generic sym gush-env)
-         (lambda (generic)
-           (.methods generic))))
-
 (define-class <gush-generic> ()
   ;; What "symbol" this maps to for read/write
   (sym #:getter .sym
@@ -36,6 +42,10 @@
   (methods #:accessor .methods
            #:init-value '()
            #:init-keyword #:methods)
+  ;; A docstring, if any
+  (docstring #:init-value #f
+             #:init-keyword #:docstring
+             #:accessor .docstring)
   ;; How many cpu "steps" invoking this method costs
   (cost #:init-value 1
         #:init-keyword #:cost
@@ -52,6 +62,15 @@
   ;; The actual procedure run
   (proc #:getter .proc
         #:init-keyword #:proc))
+
+(define-syntax-rule (define-gush-generic* gush-env sym
+                      args ...)
+  (gush-env-add-generic! gush-env (quote sym) args ...))
+
+(define-syntax-rule (define-gush-generic sym
+                      args ...)
+  (define-gush-generic* (%gush-env) sym
+    args ...))
 
 ;; emacs: (put 'gush-method 'scheme-indent-function 1)
 (define-syntax-rule (gush-method (sym (param pred) ...)
@@ -164,6 +183,10 @@
 
 
 ;; Some example methods
+
+(define-gush-generic +
+  "Foo bar baz"
+  #:cost 1)
 
 (define-gush-method (+ (x number?) (y number?))
   (+ x y))
