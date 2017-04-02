@@ -3,6 +3,7 @@
              (srfi srfi-1)
              (srfi srfi-9)
              (srfi srfi-111)
+             (fash)
              (ice-9 match)
              (ice-9 control))
 
@@ -133,7 +134,7 @@
                       vals
                       (cons stack-item re-append))))))))))))
 
-(define* (gush-generic-apply-stack gush-generic stack #:optional limiter)
+(define* (gush-generic-apply-stack gush-generic program #:optional limiter)
   "Returns a new stack with GUSH-GENERIC applied to it"
   (define methods
     (.methods gush-generic))
@@ -145,7 +146,7 @@
         (define preds (.param-preds method))
         (call-with-values
             (lambda ()
-              (find-stack-matches preds stack limiter))
+              (find-stack-matches preds program limiter))
           (match-lambda*
             ((vals new-stack)
              (call-with-values
@@ -158,7 +159,7 @@
             ((#f) #f))))
       methods)
      ;; We didn't find anything...
-     stack)))
+     (.values program))))
 
 
 
@@ -173,6 +174,15 @@
 
 (define-gush-method (* (x number?) (y number?))
   (* x y))
+
+(define-gush-method (- (x number?) (y number?))
+  (- x y))
+
+(define-gush-method (dup (var (const #t)))
+  (values var var))
+
+(define-gush-method (drop (var (const #t)))
+  (values))
 
 
 
@@ -193,7 +203,7 @@
           #:accessor .values)
 
   ;; memories is a mapping of keywords -> stacks
-  (memories #:init-thunk make-hash-table
+  (memories #:init-value (make-fash #:equal eq?)
             #:accessor .memories))
 
 (define-record-type <limiter>
