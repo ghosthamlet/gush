@@ -175,13 +175,6 @@
 
 
 
-;;; WIP
-
-;; @@: This whole damn thing could be made functional, and maybe
-;;   (despite a lot of garbage churn) that would be for the best.
-;;   But the main problem is, we'd need a fast hashmap for the
-;;   memories... probably fash would do?
-
 ;; A gush program in progress.
 (define-class <program> ()
   ;; The initial program that gets put on the eval stack
