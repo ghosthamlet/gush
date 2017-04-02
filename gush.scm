@@ -95,11 +95,12 @@
   (define-gush-method* (%gush-env) (sym (param pred) ...) body ...))
 
 
-(define* (find-stack-matches preds stack #:optional limiter)
+(define* (find-stack-matches preds program #:optional limiter)
   "Returns either:
  - #f: matches not found.
  - (items new-stack): a list of items matching PRED from the
    STACK and a new stack with those items removed."
+  (define stack (.values program))
   (let lp ((preds preds)
            (stack stack)
            (vals '())
@@ -127,7 +128,7 @@
                     re-append)
                 ;; No match, keep searching the stack
                 (begin
-                  (limiter-decrement-maybe-abort! limiter)
+                  (limiter-decrement-maybe-abort! limiter program)
                   (lp preds rest-stack
                       vals
                       (cons stack-item re-append))))))))))))
@@ -144,7 +145,7 @@
         (define preds (.param-preds method))
         (call-with-values
             (lambda ()
-              (find-stack-matches preds stack))
+              (find-stack-matches preds stack limiter))
           (match-lambda*
             ((vals new-stack)
              (call-with-values
@@ -206,20 +207,32 @@
     (set-limiter-countdown! limiter (- (limiter-countdown limiter) cost))))
 
 (define* (limiter-hit? limiter)
-  (and limiter (positive? (limiter-countdown limiter))))
+  (and limiter (negative? (limiter-countdown limiter))))
 
-(define (limiter-abort-to-prompt limiter)
-  (abort-to-prompt (limiter-prompt-tag limiter)))
+(define (limiter-abort-to-prompt limiter program)
+  (abort-to-prompt (limiter-prompt-tag limiter) program limiter))
 
-(define* (limiter-decrement-maybe-abort! limiter #:optional (cost 1))
+(define* (limiter-decrement-maybe-abort! limiter program
+                                         #:optional (cost 1))
   (limiter-decrement! limiter cost)
   (when (limiter-hit? limiter)
-    (limiter-abort-to-prompt limiter)))
+    (limiter-abort-to-prompt limiter program)))
 
 (define* (run-program program
                       #:key (limit 10000) (env (%gush-env))
                       (reset-stacks #t))
-  "Run PROGRAM (a <program> object)"
+  "Run PROGRAM (a <program> object).
+
+With RESET-STACKS set to #t (the default), the value stack will be
+cleared out and the exec stack will be loaded with the current state
+of the program.
+
+LIMIT is an integer (which will be converted into a <limiter>), or #f.
+If LIMIT runs out, will return four values to its continuation: #f, a
+continuation to resume execution, the current state of the program at
+the time it ended, and the limiter.  The user can then adjust the rate
+of the limiter by using (set-limiter-countdown!) then resume the
+continuation."
   (let* ((prompt (make-prompt-tag))
          (limiter (and limit (make-limiter limit prompt)))
          ;; Maybe reset the eval/value stacks
@@ -233,7 +246,7 @@
         (let loop ((program program))
           (match (.eval program)
             ;; program over!
-            (() (values program #t))
+            (() program)
             ((p-item p-rest ...)
              (let ((program (clone program ((.eval) p-rest))))
                (match p-item
@@ -241,10 +254,13 @@
                  ((? symbol? generic-sym)
                   (cond ((get-generic generic-sym env) =>
                          (lambda (generic)
+                           (limiter-decrement-maybe-abort! limiter program
+                                                           (.cost generic))
                            (loop (clone program
                                         ((.values)
                                          (gush-generic-apply-stack
-                                          generic (.values program)))))))
+                                          generic program
+                                          limiter))))))
                         ;; @@: For now this kinda logs symbols we don't
                         ;;   know, but maybe that isn't the right approach
                         (else
@@ -256,10 +272,16 @@
                   (loop (clone program
                                ((.values)
                                 (cons val (.values program))))))))))))
-      (lambda (program)
-        (values program #f)))))
+      (lambda (kont program limiter)
+        (values #f kont program limiter)))))
 
 (define (run code . extra-args)
-  (.values
-   (apply run-program (make <program> #:code code)
-          extra-args)))
+  (call-with-values
+      (lambda ()
+        (apply run-program (make <program> #:code code)
+               extra-args))
+    (match-lambda*
+      (((? (lambda (x) (is-a? x <program>)) prog))
+       (.values prog))
+      ;; Otherwise, return the values we got
+      (vals (apply values vals)))))
