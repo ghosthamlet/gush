@@ -7,94 +7,106 @@
              (ice-9 match)
              (ice-9 control))
 
-;; mapping of symbol -> <gush-generic>
-(define %gush-env (make-parameter (make-hash-table)))
+
+;;; Generics and environments
 
-(define-inlinable (get-generic sym gush-env)
-  (hashq-ref gush-env sym))
-
-(define-inlinable (set-generic! sym val gush-env)
-  (hashq-set! gush-env sym val))
-
-(define (gush-env-add-generic! gush-env sym . args)
-  (define generic-args
-    (match args
-      (((? string? docstring) rest-args ...)
-       (cons* #:docstring docstring
-              rest-args))))
-  (define generic
-    (apply make <gush-generic>
-         #:sym sym
-         generic-args))
-  (set-generic! sym generic gush-env))
-
-(define (gush-env-add-method! gush-env gush-method)
-  (let* ((sym (.sym gush-method))
-         (generic (or (get-generic sym gush-env)
-                      (let ((new-generic (make <gush-generic> #:sym sym)))
-                        (set-generic! sym new-generic gush-env)
-                        new-generic))))
-    (set! (.methods generic)
-          (cons gush-method (.methods generic)))))
-
-(define-class <gush-generic> ()
+(define-record-type <gush-generic>
+  (%make-gush-generic sym methods docstring cost)
+  gush-generic?
   ;; What "symbol" this maps to for read/write
-  (sym #:getter .sym
-       #:init-keyword #:sym)
+  (sym gush-generic-sym)
   ;; List of methods that implement this generic
-  (methods #:accessor .methods
-           #:init-value '()
-           #:init-keyword #:methods)
+  (methods gush-generic-methods set-gush-generic-methods!)
   ;; A docstring, if any
-  (docstring #:init-value #f
-             #:init-keyword #:docstring
-             #:accessor .docstring)
+  (docstring gush-generic-docstring)
   ;; How many cpu "steps" invoking this method costs
-  (cost #:init-value 1
-        #:init-keyword #:cost
-        #:getter .cost))
+  (cost gush-generic-cost))
 
-(define-class <gush-method> ()
-  ;; What "symbol" this maps to for read/write
-  (sym #:getter .sym
-       #:init-keyword #:sym)
-  ;; List of predicates mapping to parameters passed to
-  ;; this procedure
-  (param-preds #:getter .param-preds
-               #:init-keyword #:param-preds)
-  ;; The actual procedure run
-  (proc #:getter .proc
-        #:init-keyword #:proc))
+(define* (make-gush-generic defined-sym
+                            #:optional docstring
+                            #:key (cost 1)
+                            (methods '())
+                            (sym defined-sym))
+  (%make-gush-generic sym methods docstring cost))
 
-(define-syntax-rule (define-gush-generic* gush-env sym
-                      args ...)
-  (gush-env-add-generic! gush-env (quote sym) args ...))
+(define-record-type <gush-method>
+  (%make-gush-method param-preds proc)
+  gush-method?
+  (param-preds gush-method-param-preds)
+  (proc gush-method-proc))
 
-(define-syntax-rule (define-gush-generic sym
-                      args ...)
-  (define-gush-generic* (%gush-env) sym
-    args ...))
+(define-syntax-rule (define-gush-generic sym args ...)
+  (define sym
+    (make-gush-generic (quote sym) args ...)))
 
 ;; emacs: (put 'gush-method 'scheme-indent-function 1)
-(define-syntax-rule (gush-method (sym (param pred) ...)
+(define-syntax-rule (gush-method ((param pred) ...)
                       body ...)
-  (make <gush-method>
-    #:sym (quote sym)
-    #:param-preds (list pred ...)
-    #:proc (lambda (param ...)
-             body ...)))
+  (%make-gush-method (list pred ...)
+                     (lambda (param ...)
+                       body ...)))
 
-(define-syntax-rule (define-gush-method* gush-env (sym (param pred) ...)
+(define-syntax-rule (define-gush-method (generic (param pred) ...)
                       body ...)
-  "Add a gush method to GUSH-ENV"
-  (gush-env-add-method! (%gush-env)
-                        (gush-method (sym (param pred) ...) body ...)))
+  "Append a gush method to the generic SYM"
+  (set-gush-generic-methods!
+   generic (cons (gush-method ((param pred) ...) body ...)
+                 (gush-generic-methods generic))))
 
-(define-syntax-rule (define-gush-method (sym (param pred) ...)
-                      body ...)
-  "Add a gush method to the default %gush-env"
-  (define-gush-method* (%gush-env) (sym (param pred) ...) body ...))
+(define (make-gush-env . generics)
+  (let ((env (make-hash-table)))
+    (for-each (lambda (generic)
+                (hashq-set! env (gush-generic-sym generic)
+                            generic))
+              generics)
+    env))
 
+(define-inlinable (get-generic gush-env sym)
+  (hashq-ref gush-env sym))
+
+
+;; Some example methods
+
+(define-gush-generic gush:+
+  "Add two numbers on the stack"
+  #:sym '+)
+
+(define-gush-method (gush:+ (x number?) (y number?))
+  (+ x y))
+
+(define-gush-generic gush:*
+  "Multiply two numbers on the stack"
+  #:sym '*)
+
+(define-gush-method (gush:* (x number?) (y number?))
+  (* x y))
+
+(define-gush-generic gush:-
+  "Subtract two numbers on the stack"
+  #:sym '-)
+
+(define-gush-method (gush:- (x number?) (y number?))
+  (- x y))
+
+(define-gush-generic gush:dup
+  "Duplicate the top item on the stack"
+  #:sym 'dup)
+
+(define-gush-method (gush:dup (var (const #t)))
+  (values var var))
+
+(define-gush-generic gush:drop
+  "Drop the top item on the stack"
+  #:sym 'drop)
+
+(define-gush-method (gush:drop (var (const #t)))
+  (values))
+
+(define *default-gush-env*
+  (make-gush-env gush:+ gush:* gush:-
+                 gush:drop gush:dup))
+
+
 
 (define* (find-stack-matches preds program #:optional limiter)
   "Returns either:
@@ -137,13 +149,13 @@
 (define* (gush-generic-apply-stack gush-generic program #:optional limiter)
   "Returns a new stack with GUSH-GENERIC applied to it"
   (define methods
-    (.methods gush-generic))
+    (gush-generic-methods gush-generic))
 
   (call/ec
    (lambda (return)
      (for-each
       (lambda (method)
-        (define preds (.param-preds method))
+        (define preds (gush-method-param-preds method))
         (call-with-values
             (lambda ()
               (find-stack-matches preds program limiter))
@@ -151,7 +163,7 @@
             ((vals new-stack)
              (call-with-values
                  (lambda ()
-                   (apply (.proc method) vals))
+                   (apply (gush-method-proc method) vals))
                (lambda return-values
                  (return
                   (append return-values new-stack)))))
@@ -160,29 +172,6 @@
       methods)
      ;; We didn't find anything...
      (.values program))))
-
-
-
-;; Some example methods
-
-(define-gush-generic +
-  "Add two numbers on the stack"
-  #:cost 1)
-
-(define-gush-method (+ (x number?) (y number?))
-  (+ x y))
-
-(define-gush-method (* (x number?) (y number?))
-  (* x y))
-
-(define-gush-method (- (x number?) (y number?))
-  (- x y))
-
-(define-gush-method (dup (var (const #t)))
-  (values var var))
-
-(define-gush-method (drop (var (const #t)))
-  (values))
 
 
 
@@ -229,7 +218,7 @@
     (limiter-abort-to-prompt limiter program)))
 
 (define* (run-program program
-                      #:key (limit 10000) (env (%gush-env))
+                      #:key (limit 10000) (env *default-gush-env*)
                       (reset-stacks #t))
   "Run PROGRAM (a <program> object).
 
@@ -262,10 +251,11 @@ continuation."
                (match p-item
                  ;; A symbol? We treat that as a core procedure...
                  ((? symbol? generic-sym)
-                  (cond ((get-generic generic-sym env) =>
+                  (cond ((get-generic env generic-sym) =>
                          (lambda (generic)
-                           (limiter-decrement-maybe-abort! limiter program
-                                                           (.cost generic))
+                           (limiter-decrement-maybe-abort!
+                            limiter program
+                            (gush-generic-cost generic))
                            (loop (clone program
                                         ((.values)
                                          (gush-generic-apply-stack
