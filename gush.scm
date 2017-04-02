@@ -1,6 +1,7 @@
 (use-modules (oop goops)
              (srfi srfi-1)
-             ;; (srfi srfi-9)
+             (srfi srfi-9)
+             (srfi srfi-111)
              (ice-9 match)
              (ice-9 control))
 
@@ -93,7 +94,7 @@
   (define-gush-method* (%gush-env) (sym (param pred) ...) body ...))
 
 
-(define (find-stack-matches preds stack)
+(define* (find-stack-matches preds stack #:optional limiter)
   "Returns either:
  - #f: matches not found.
  - (items new-stack): a list of items matching PRED from the
@@ -124,11 +125,13 @@
                     (cons stack-item vals)
                     re-append)
                 ;; No match, keep searching the stack
-                (lp preds rest-stack
-                    vals
-                    (cons stack-item re-append)))))))))))
+                (begin
+                  (limiter-decrement-maybe-abort! limiter)
+                  (lp preds rest-stack
+                      vals
+                      (cons stack-item re-append))))))))))))
 
-(define (gush-generic-apply-stack gush-generic stack)
+(define* (gush-generic-apply-stack gush-generic stack #:optional limiter)
   "Returns a new stack with GUSH-GENERIC applied to it"
   (define methods
     (.methods gush-generic))
@@ -155,31 +158,6 @@
      ;; We didn't find anything...
      stack)))
 
-(define* (run-program program #:optional (val-stack '())
-                      #:key (env (%gush-env)))
-  (let lp ((program program)
-           (val-stack val-stack))
-    (match program
-      ;; program over!
-      (() val-stack)
-      ((p-item p-rest ...)
-       (match p-item
-         ;; A symbol? We treat that as a core procedure...
-         ((? symbol? generic-sym)
-          (cond ((get-generic generic-sym env) =>
-                 (lambda (generic)
-                   (lp p-rest (gush-generic-apply-stack
-                               generic val-stack))))
-                ;; Ignore symbols we don't know?
-                ;; @@: Maybe we should no-op, which would
-                ;;   maybe be closer to Push
-                (else
-                 (throw 'unknown-gush-method
-                        #:sym generic-sym))))
-         ;; TODO: list stuff here...
-         ;; We got just a value, so append it to the value stack
-         (val (lp p-rest (cons val val-stack))))))))
-
 
 
 ;; Some example methods
@@ -194,6 +172,11 @@
 
 
 ;;; WIP
+
+;; @@: This whole damn thing could be made functional, and maybe
+;;   (despite a lot of garbage churn) that would be for the best.
+;;   But the main problem is, we'd need a fast hashmap for the
+;;   memories... probably fash would do?
 
 ;; A gush program in progress.
 (define-class <program> ()
@@ -214,3 +197,79 @@
   ;; memories is a mapping of keywords -> stacks
   (memories #:init-thunk make-hash-table
             #:accessor .memories))
+
+(define-record-type <limiter>
+  (make-limiter countdown prompt-tag)
+  limiter?
+  (countdown limiter-countdown set-limiter-countdown!)
+  (prompt-tag limiter-prompt-tag))
+
+(define* (limiter-decrement! limiter #:optional (cost 1))
+  (when limiter
+    (set-limiter-countdown! limiter (- (limiter-countdown limiter) cost))))
+
+(define* (limiter-hit? limiter)
+  (and limiter (positive? (limiter-countdown limiter))))
+
+(define (limiter-abort-to-prompt limiter)
+  (abort-to-prompt (limiter-prompt-tag limiter)))
+
+(define* (limiter-decrement-maybe-abort! limiter #:optional (cost 1))
+  (limiter-decrement! limiter cost)
+  (when (limiter-hit? limiter)
+    (limiter-abort-to-prompt limiter)))
+
+(define *current-program*
+  (make-parameter #f))
+
+(define* (run-program! program
+                       #:key (limit 10000) (env (%gush-env))
+                       (reset-stacks #t))
+  (when reset-stacks
+    ;; Copy code to eval-stack
+    (set! (.eval-stack program) (.code program))
+    ;; Clear the value stack, if anything is there
+    (set! (.value-stack program) '()))
+  (let* ((prompt (make-prompt-tag))
+         (limiter (and limit (make-limiter limit prompt))))
+    (parameterize ((*current-program* program))
+      (call-with-prompt prompt
+        (lambda ()
+          (define (loop)
+            (match (.eval-stack program)
+              ;; program over!
+              (() program)
+              ((p-item p-rest ...)
+               (match p-item
+                 ;; A symbol? We treat that as a core procedure...
+                 ((? symbol? generic-sym)
+                  (cond ((get-generic generic-sym env) =>
+                         (lambda (generic)
+                           (set! (.value-stack program)
+                                 (gush-generic-apply-stack generic (.value-stack program)))
+                           (set! (.eval-stack program)
+                                 p-rest)
+                           (loop)))
+                        ;; Ignore symbols we don't know?
+                        ;; @@: Maybe we should no-op, which would
+                        ;;   maybe be closer to Push
+                        (else
+                         (throw 'unknown-gush-method
+                                #:sym generic-sym))))
+                 ;; TODO: list stuff here...
+                 ;; We got just a value, so append it to the value stack
+                 (val
+                  (set! (.eval-stack program)
+                        p-rest)
+                  (set! (.value-stack program)
+                        (cons val (.value-stack program)))
+                  (loop))))))
+          (loop)
+          (values program #t))
+        (lambda ()
+          (values program #f))))))
+
+(define (run code . extra-args)
+  (.value-stack
+   (apply run-program! (make <program> #:code code)
+          extra-args)))
