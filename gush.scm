@@ -194,9 +194,9 @@
   ;;   and what's the current value stack?
   ;; That might be dangerous though.
   (eval #:init-value '()
-              #:accessor .eval)
+        #:accessor .eval)
   (values #:init-value '()
-               #:accessor .values)
+          #:accessor .values)
 
   ;; memories is a mapping of keywords -> stacks
   (memories #:init-thunk make-hash-table
