@@ -8,32 +8,119 @@
              (ice-9 control))
 
 
-;;; Generics and environments
+;;; Procedures, generics, and environments
+;;; ======================================
 
-(define-record-type <gush-generic>
-  (%make-gush-generic sym methods docstring cost)
-  gush-generic?
-  ;; What "symbol" this maps to for read/write
-  (sym gush-generic-sym)
-  ;; List of methods that implement this generic
-  (methods gush-generic-methods set-gush-generic-methods!)
-  ;; A docstring, if any
-  (docstring gush-generic-docstring)
+;; Abstract "procedure" to operate on a stack.
+;; (Generics are a specialization of this.)
+(define-class <gush-proc> ()
+  ;; What "symbol" this maps to in gush code
+  (sym #:accessor .sym
+       #:init-keyword #:sym)
+  ;; Procedure to run... (gush-proc, program, limiter) -> (program, limiter)
+  (proc #:init-keyword #:proc
+        #:accessor .proc)
+  ;; Optional docstring
+  (docstring #:init-keyword #:docstring
+             #:init-value #f
+             #:getter .docstring)
   ;; How many cpu "steps" invoking this method costs
-  (cost gush-generic-cost))
-
-(define* (make-gush-generic defined-sym
-                            #:optional docstring
-                            #:key (cost 1)
-                            (methods '())
-                            (sym defined-sym))
-  (%make-gush-generic sym methods docstring cost))
+  (cost #:init-keyword #:cost
+        #:init-value 1
+        #:getter .cost))
 
 (define-record-type <gush-method>
   (%make-gush-method param-preds proc)
   gush-method?
   (param-preds gush-method-param-preds)
   (proc gush-method-proc))
+
+(define* (find-stack-matches preds program #:optional limiter)
+  "Returns either:
+ - #f: matches not found.
+ - (items new-stack): a list of items matching PRED from the
+   STACK and a new stack with those items removed."
+  (define stack (.values program))
+  (let lp ((preds preds)
+           (stack stack)
+           (vals '())
+           (re-append '()))
+    (cond
+     ;; We've reached the end of our preds... horray!
+     ;; return the vals we found and the new stack
+     ((eq? preds '())
+      (values (reverse vals)
+              ;; faster version of (append (reverse re-append) stack)
+              (fold cons stack re-append)))
+     ;; We've reached the end of the stack without finding
+     ;; matches... return false
+     ((eq? stack '())
+      #f)
+     (else
+      (match stack
+        ((stack-item rest-stack ...)
+         (match preds
+           ((this-pred rest-preds ...)
+            (if (this-pred stack-item)
+                ;; Nice, we found a match!  cdr down the preds
+                (lp rest-preds rest-stack
+                    (cons stack-item vals)
+                    re-append)
+                ;; No match, keep searching the stack
+                (begin
+                  (limiter-decrement-maybe-abort! limiter program)
+                  (lp preds rest-stack
+                      vals
+                      (cons stack-item re-append))))))))))))
+
+(define* (gush-generic-apply-stack gush-generic program limiter)
+  "Returns a new stack with GUSH-GENERIC applied to it"
+  (define methods
+    (.methods gush-generic))
+
+  (call/ec
+   (lambda (return)
+     (for-each
+      (lambda (method)
+        (define preds (gush-method-param-preds method))
+        (call-with-values
+            (lambda ()
+              (find-stack-matches preds program limiter))
+          (match-lambda*
+            ((vals new-stack)
+             (call-with-values
+                 (lambda ()
+                   (apply (gush-method-proc method) vals))
+               (lambda return-values
+                 (return (clone program ((.values)
+                                         (append return-values new-stack)))
+                         limiter))))
+            ;; no match, keep looping
+            ((#f) #f))))
+      methods)
+     ;; We didn't find anything...
+     (values program limiter))))
+
+(define-class <gush-generic> (<gush-proc>)
+  ;; We use gush-generic-apply as a very specific meta-procedure
+  ;; for generics
+  (proc #:accessor .proc
+        #:allocation #:class
+        #:init-value gush-generic-apply-stack)
+  ;; List of methods that implement this generic
+  (methods #:accessor .methods
+           #:init-value '()
+           #:init-keyword #:methods))
+
+;; @@: We could deprecate this and just put into define-gush-generic?
+(define* (make-gush-generic defined-sym
+                            #:optional docstring
+                            #:key (cost 1)
+                            (methods '())
+                            (sym defined-sym))
+  (make <gush-generic>
+    #:sym sym #:methods methods
+    #:docstring docstring #:cost cost))
 
 (define-syntax-rule (define-gush-generic sym args ...)
   (define sym
@@ -49,19 +136,19 @@
 (define-syntax-rule (define-gush-method (generic (param pred) ...)
                       body ...)
   "Append a gush method to the generic SYM"
-  (set-gush-generic-methods!
-   generic (cons (gush-method ((param pred) ...) body ...)
-                 (gush-generic-methods generic))))
+  (set! (.methods generic)
+        (cons (gush-method ((param pred) ...) body ...)
+              (.methods generic))))
 
-(define (make-gush-env . generics)
+(define (make-gush-env . gush-procs)
   (let ((env (make-hash-table)))
-    (for-each (lambda (generic)
-                (hashq-set! env (gush-generic-sym generic)
-                            generic))
-              generics)
+    (for-each (lambda (gush-proc)
+                (hashq-set! env (.sym gush-proc)
+                            gush-proc))
+              gush-procs)
     env))
 
-(define-inlinable (get-generic gush-env sym)
+(define-inlinable (gush-env-get-proc gush-env sym)
   (hashq-ref gush-env sym))
 
 
@@ -105,73 +192,6 @@
 (define *default-gush-env*
   (make-gush-env gush:+ gush:* gush:-
                  gush:drop gush:dup))
-
-
-
-(define* (find-stack-matches preds program #:optional limiter)
-  "Returns either:
- - #f: matches not found.
- - (items new-stack): a list of items matching PRED from the
-   STACK and a new stack with those items removed."
-  (define stack (.values program))
-  (let lp ((preds preds)
-           (stack stack)
-           (vals '())
-           (re-append '()))
-    (cond
-     ;; We've reached the end of our preds... horray!
-     ;; return the vals we found and the new stack
-     ((eq? preds '())
-      (values (reverse vals)
-              ;; faster version of (append (reverse re-append) stack)
-              (fold cons stack re-append)))
-     ;; We've reached the end of the stack without finding
-     ;; matches... return false
-     ((eq? stack '())
-      #f)
-     (else
-      (match stack
-        ((stack-item rest-stack ...)
-         (match preds
-           ((this-pred rest-preds ...)
-            (if (this-pred stack-item)
-                ;; Nice, we found a match!  cdr down the preds
-                (lp rest-preds rest-stack
-                    (cons stack-item vals)
-                    re-append)
-                ;; No match, keep searching the stack
-                (begin
-                  (limiter-decrement-maybe-abort! limiter program)
-                  (lp preds rest-stack
-                      vals
-                      (cons stack-item re-append))))))))))))
-
-(define* (gush-generic-apply-stack gush-generic program #:optional limiter)
-  "Returns a new stack with GUSH-GENERIC applied to it"
-  (define methods
-    (gush-generic-methods gush-generic))
-
-  (call/ec
-   (lambda (return)
-     (for-each
-      (lambda (method)
-        (define preds (gush-method-param-preds method))
-        (call-with-values
-            (lambda ()
-              (find-stack-matches preds program limiter))
-          (match-lambda*
-            ((vals new-stack)
-             (call-with-values
-                 (lambda ()
-                   (apply (gush-method-proc method) vals))
-               (lambda return-values
-                 (return
-                  (append return-values new-stack)))))
-            ;; no match, keep looping
-            ((#f) #f))))
-      methods)
-     ;; We didn't find anything...
-     (.values program))))
 
 
 
@@ -250,21 +270,19 @@ continuation."
              (let ((program (clone program ((.eval) p-rest))))
                (match p-item
                  ;; A symbol? We treat that as a core procedure...
-                 ((? symbol? generic-sym)
-                  (cond ((get-generic env generic-sym) =>
-                         (lambda (generic)
-                           (limiter-decrement-maybe-abort!
-                            limiter program
-                            (gush-generic-cost generic))
-                           (loop (clone program
-                                        ((.values)
-                                         (gush-generic-apply-stack
-                                          generic program
-                                          limiter))))))
+                 ((? symbol? proc-sym)
+                  (cond ((gush-env-get-proc env proc-sym) =>
+                         (lambda (gush-proc)
+                           (let ((run-proc (.proc gush-proc)))
+                             (limiter-decrement-maybe-abort!
+                              limiter program
+                              (.cost gush-proc))
+                             (loop (run-proc gush-proc program
+                                             limiter)))))
                         ;; @@: For now this kinda logs symbols we don't
                         ;;   know, but maybe that isn't the right approach
                         (else
-                         (pk 'unknown-gush-method generic-sym)
+                         (pk 'unknown-gush-method proc-sym)
                          (loop program))))
                  ;; TODO: list stuff here...
                  ;; We got just a value, so append it to the value stack
