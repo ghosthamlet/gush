@@ -312,7 +312,12 @@ continuation."
                         (else
                          (pk 'unknown-gush-method proc-sym)
                          (loop program))))
-                 ;; TODO: list stuff here...
+                 ;; Unwrap lists to be applied to the exec stack
+                 ;; @@: What happens if it's a dotted-list?
+                 ((? pair? lst)
+                  (limiter-decrement-maybe-abort! limiter program)
+                  (loop (clone program
+                               ((.exec) (append lst (.exec program))))))
                  ;; We got just a value, so append it to the value stack
                  (val
                   (loop (clone program
