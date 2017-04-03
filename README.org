@@ -1,0 +1,17 @@
+* What's Gush?
+
+Gush is inspired by [[http://faculty.hampshire.edu/lspector/push.html][PushGP / Push]].  It's a stack based language,
+similar to Push or [[https://en.wikipedia.org/wiki/Forth_%28programming_language%29][Forth]], and is suitable for [[https://en.wikipedia.org/wiki/Genetic_programming][genetic programming]].
+The primary distinction between Gush and Push is how it avoids
+type errors: Push uses one value stack per type and a broad number of
+operators to operate on those individual types, while Gush uses a
+single value stack and has a smaller number of operators using
+generic methods which "search" the stack to see what values they
+can operate on.  (This can be kept in check as Gush's programs can
+be "limited" to a certain number of operations, and searching the
+stack by missing an item counts against the limit, incentivizing
+keeping relevant types near the type during operations.)
+
+Gush also aims to implement a type of "memory", so that processes
+can remember some details about their prior runs, and eventually,
+might even teach their children based off of their own memories.
