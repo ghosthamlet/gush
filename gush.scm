@@ -191,9 +191,9 @@
   (values))
 
 ;; @@: Dangerous?  Equiv to EXEC.FLUSH in Push anyway
-(define gush:exit
+(define gush:halt
   (make <applicable>
-    #:sym 'exit
+    #:sym 'halt
     #:cost 0
     #:proc (lambda (applicable program limiter)
              (values (clone program ((.exec) '()))
@@ -202,7 +202,7 @@
 (define *default-gush-env*
   (make-gush-env gush:+ gush:* gush:-
                  gush:drop gush:dup
-                 gush:exit))
+                 gush:halt))
 
 
 
