@@ -13,11 +13,11 @@
 
 ;; Abstract "procedure" to operate on a stack.
 ;; (Generics are a specialization of this.)
-(define-class <gush-proc> ()
+(define-class <applicable> ()
   ;; What "symbol" this maps to in gush code
   (sym #:accessor .sym
        #:init-keyword #:sym)
-  ;; Procedure to run... (gush-proc, program, limiter) -> (program, limiter)
+  ;; Procedure to run... (applicable, program, limiter) -> (program, limiter)
   (proc #:init-keyword #:proc
         #:accessor .proc)
   ;; Optional docstring
@@ -101,7 +101,7 @@
      ;; We didn't find anything...
      (values program limiter))))
 
-(define-class <gush-generic> (<gush-proc>)
+(define-class <gush-generic> (<applicable>)
   ;; We use gush-generic-apply as a very specific meta-procedure
   ;; for generics
   (proc #:accessor .proc
@@ -141,12 +141,12 @@
               (.methods generic))))
 
 ;;; Environment stuff
-(define (make-gush-env . gush-procs)
+(define (make-gush-env . applicables)
   (let ((env (make-hash-table)))
-    (for-each (lambda (gush-proc)
-                (hashq-set! env (.sym gush-proc)
-                            gush-proc))
-              gush-procs)
+    (for-each (lambda (applicable)
+                (hashq-set! env (.sym applicable)
+                            applicable))
+              applicables)
     env))
 
 (define-inlinable (gush-env-get-proc gush-env sym)
@@ -192,10 +192,10 @@
 
 ;; @@: Dangerous?  Equiv to EXEC.FLUSH in Push anyway
 (define gush:exit
-  (make <gush-proc>
+  (make <applicable>
     #:sym 'exit
     #:cost 0
-    #:proc (lambda (gush-proc program limiter)
+    #:proc (lambda (applicable program limiter)
              (values (clone program ((.exec) '()))
                      limiter))))
 
@@ -283,12 +283,12 @@ continuation."
                  ;; A symbol? We treat that as a core procedure...
                  ((? symbol? proc-sym)
                   (cond ((gush-env-get-proc env proc-sym) =>
-                         (lambda (gush-proc)
-                           (let ((run-proc (.proc gush-proc)))
+                         (lambda (applicable)
+                           (let ((run-proc (.proc applicable)))
                              (limiter-decrement-maybe-abort!
                               limiter program
-                              (.cost gush-proc))
-                             (loop (run-proc gush-proc program
+                              (.cost applicable))
+                             (loop (run-proc applicable program
                                              limiter)))))
                         ;; @@: For now this kinda logs symbols we don't
                         ;;   know, but maybe that isn't the right approach
