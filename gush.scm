@@ -140,6 +140,7 @@
         (cons (gush-method ((param pred) ...) body ...)
               (.methods generic))))
 
+;;; Environment stuff
 (define (make-gush-env . gush-procs)
   (let ((env (make-hash-table)))
     (for-each (lambda (gush-proc)
@@ -189,25 +190,35 @@
 (define-gush-method (gush:drop (var (const #t)))
   (values))
 
+;; @@: Dangerous?  Equiv to EXEC.FLUSH in Push anyway
+(define gush:exit
+  (make <gush-proc>
+    #:sym 'exit
+    #:cost 0
+    #:proc (lambda (gush-proc program limiter)
+             (values (clone program ((.exec) '()))
+                     limiter))))
+
 (define *default-gush-env*
   (make-gush-env gush:+ gush:* gush:-
-                 gush:drop gush:dup))
+                 gush:drop gush:dup
+                 gush:exit))
 
 
 
 ;; A gush program in progress.
 (define-class <program> ()
-  ;; The initial program that gets put on the eval stack
+  ;; The initial program that gets put on the exec stack
   (code #:init-keyword #:code
         #:accessor .code)
 
-  ;; @@: In the future, maybe both the value stack and eval stack
+  ;; @@: In the future, maybe both the value stack and exec stack
   ;;   will just be stacks on the memories mapping?
-  ;; Maybe users will be able to "switch" what's the current eval stack
+  ;; Maybe users will be able to "switch" what's the current exec stack
   ;;   and what's the current value stack?
   ;; That might be dangerous though.
-  (eval #:init-value '()
-        #:accessor .eval)
+  (exec #:init-value '()
+        #:accessor .exec)
   (values #:init-value '()
           #:accessor .values)
 
@@ -254,20 +265,20 @@ of the limiter by using (set-limiter-countdown!) then resume the
 continuation."
   (let* ((prompt (make-prompt-tag))
          (limiter (and limit (make-limiter limit prompt)))
-         ;; Maybe reset the eval/value stacks
+         ;; Maybe reset the exec/value stacks
          (program (if reset-stacks
                       (clone program
-                             ((.eval) (.code program))
+                             ((.exec) (.code program))
                              ((.values) '()))
                       program)))
     (call-with-prompt prompt
       (lambda ()
         (let loop ((program program))
-          (match (.eval program)
+          (match (.exec program)
             ;; program over!
             (() program)
             ((p-item p-rest ...)
-             (let ((program (clone program ((.eval) p-rest))))
+             (let ((program (clone program ((.exec) p-rest))))
                (match p-item
                  ;; A symbol? We treat that as a core procedure...
                  ((? symbol? proc-sym)
