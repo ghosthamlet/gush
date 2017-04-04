@@ -105,13 +105,10 @@
               (find-stack-matches preds program limiter))
           (match-lambda*
             ((vals new-stack)
-             (call-with-values
-                 (lambda ()
-                   (apply (gush-method-proc method) vals))
-               (lambda return-values
-                 (return (clone program ((.values)
-                                         (append return-values new-stack)))
-                         limiter))))
+             (return (apply (gush-method-proc method)
+                            (clone program ((.values) new-stack))
+                            vals)
+                     limiter))
             ;; no match, keep looping
             ((#f) #f))))
       methods)
@@ -143,19 +140,45 @@
   (define sym
     (make-gush-generic (quote sym) args ...)))
 
+;; Construct a wrapper around the method
+(define (stack-method-wrapper proc)
+  (lambda (program . args)
+    (call-with-values (lambda ()
+                        (apply proc args))
+      (lambda return-values
+        (clone program
+               ((.values)
+                (append return-values (.values program))))))))
+
 ;; emacs: (put 'gush-method 'scheme-indent-function 1)
-(define-syntax-rule (gush-method ((param pred) ...)
+(define-syntax-rule (stack-method ((param pred) ...)
                       body ...)
   (%make-gush-method (list pred ...)
-                     (lambda (param ...)
-                       body ...)))
+                     (stack-method-wrapper
+                      (lambda (param ...)
+                        body ...))))
 
-(define-syntax-rule (define-gush-method (generic (param pred) ...)
+(define-syntax-rule (define-stack-method (generic (param pred) ...)
                       body ...)
   "Append a gush method to the generic SYM"
   (set! (.methods generic)
-        (cons (gush-method ((param pred) ...) body ...)
+        (cons (stack-method ((param pred) ...) body ...)
               (.methods generic))))
+
+;;; This annoyingly duplicates the above.  De-dupe it!
+(define-syntax-rule (program-method (program (param pred) ...)
+                      body ...)
+  (%make-gush-method (list pred ...)
+                     (lambda (program param ...)
+                       body ...)))
+
+(define-syntax-rule (define-program-method (generic (param pred) ...)
+                      body ...)
+  "Append a gush method to the generic SYM"
+  (set! (.methods generic)
+        (cons (program-method ((param pred) ...) body ...)
+              (.methods generic))))
+
 
 ;;; Environment stuff
 (define (make-gush-env . applicables)
@@ -176,35 +199,35 @@
   "Add two numbers on the stack"
   #:sym '+)
 
-(define-gush-method (gush:+ (x number?) (y number?))
+(define-stack-method (gush:+ (x number?) (y number?))
   (+ x y))
 
 (define-gush-generic gush:*
   "Multiply two numbers on the stack"
   #:sym '*)
 
-(define-gush-method (gush:* (x number?) (y number?))
+(define-stack-method (gush:* (x number?) (y number?))
   (* x y))
 
 (define-gush-generic gush:-
   "Subtract two numbers on the stack"
   #:sym '-)
 
-(define-gush-method (gush:- (x number?) (y number?))
+(define-stack-method (gush:- (x number?) (y number?))
   (- x y))
 
 (define-gush-generic gush:dup
   "Duplicate the top item on the stack"
   #:sym 'dup)
 
-(define-gush-method (gush:dup (var (const #t)))
+(define-stack-method (gush:dup (var (const #t)))
   (values var var))
 
 (define-gush-generic gush:drop
   "Drop the top item on the stack"
   #:sym 'drop)
 
-(define-gush-method (gush:drop (var (const #t)))
+(define-stack-method (gush:drop (var (const #t)))
   (values))
 
 ;; @@: Dangerous?  Equiv to EXEC.FLUSH in Push anyway
