@@ -209,6 +209,13 @@
 (define-stack-method (gush:* (x number?) (y number?))
   (* x y))
 
+(define-gush-generic gush:/
+  "Divide two numbers on the stack"
+  #:sym '/)
+
+(define-stack-method (gush:/ (x number?) (y number?))
+  (/ x y))
+
 (define-gush-generic gush:-
   "Subtract two numbers on the stack"
   #:sym '-)
@@ -240,7 +247,7 @@
                      limiter))))
 
 (define *default-gush-env*
-  (make-gush-env gush:+ gush:* gush:-
+  (make-gush-env gush:+ gush:- gush:* gush:/
                  gush:drop gush:dup
                  gush:halt))
 
