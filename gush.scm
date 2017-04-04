@@ -242,14 +242,98 @@
   (make <applicable>
     #:sym 'halt
     #:cost 0
+    #:docstring "Stop the program completely by wiping the exec stack."
     #:proc (lambda (applicable program limiter)
              (values (clone program ((.exec) '()))
                      limiter))))
 
+;; Memory things
+(define gush:quote
+  (make <applicable>
+    #:sym 'quote
+    #:docstring
+    "Push the next item from the exec stack onto the value stack, without applying."
+    #:proc (lambda (applicable program limiter)
+             (match (.exec program)
+               ;; Quote the item as-is onto the values stack
+               ((exec-item exec-rest ...)
+                (values (clone program
+                               ((.values) (cons exec-item
+                                                (.values program)))
+                               ((.exec) exec-rest))
+                        limiter))
+               ;; nothing to do, so just return the program as-is
+               (() (values program limiter))))))
+
+;;; Memory operations
+
+(define gush:define
+  (make <applicable>
+    #:sym 'define
+    #:docstring "(values: var <symbol>, val <any>) Set the memory stack of VAR to VAL, erasing any other content previously on the stack"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:forget
+  (make <applicable>
+    #:sym 'forget
+    #:docstring "(values: var <symbol>) Forget the value of VAR altogether"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:var-set-stack
+  (make <applicable>
+    #:sym 'var-set-stack
+    #:docstring "(values: var <symbol>, stack <list>) Replace contents of VAR with stack STACK (a list)"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:var-push
+  (make <applicable>
+    #:sym 'var-push
+    #:docstring "(values: var <symbol>, val <any>) Push VAL onto VAR"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:var-pop
+  (make <applicable>
+    #:sym 'var-pop
+    #:docstring "(values: var <symbol>) Pop value of VAR from its stack onto the exec stack"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:var-ref
+  (make <applicable>
+    #:sym 'var-ref
+    #:docstring "(values: var <symbol>) Put top value of VAR onto the exec stack"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:var-quote-pop
+  (make <applicable>
+    #:sym 'var-quote-pop
+    #:docstring "(values: var <symbol>) Pop value of VAR from its stack onto the values stack without evaluating"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:var-quote-ref
+  (make <applicable>
+    #:sym 'var-quote-pop
+    #:docstring "(values: var <symbol>) Put top value of VAR onto the values stack without evaluating"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
+(define gush:var-quote-stack
+  (make <applicable>
+    #:sym 'var-quote-pop
+    #:docstring "(values: var <symbol>) Put entire contents of VAR onto the values stack without evaluating"
+    #:proc (lambda (applicable program limiter)
+             'TODO)))
+
 (define *default-gush-env*
   (make-gush-env gush:+ gush:- gush:* gush:/
                  gush:drop gush:dup
-                 gush:halt))
+                 gush:halt gush:quote))
 
 
 
