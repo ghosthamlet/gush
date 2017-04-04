@@ -343,19 +343,17 @@
   (code #:init-keyword #:code
         #:accessor .code)
 
-  ;; @@: In the future, maybe both the value stack and exec stack
-  ;;   will just be stacks on the memories mapping?
-  ;; Maybe users will be able to "switch" what's the current exec stack
-  ;;   and what's the current value stack?
-  ;; That might be dangerous though.
+  ;; Program instructions queued to be executed (also a stack)
   (exec #:init-value '()
         #:accessor .exec)
+  ;; Values this program has built up; aka "the stack"
+  ;; (even though there multiple stacks)
   (values #:init-value '()
           #:accessor .values)
 
-  ;; memories is a mapping of keywords -> stacks
-  (memories #:init-value (make-fash #:equal eq?)
-            #:accessor .memories))
+  ;; vars is a mapping of keywords -> stacks
+  (vars #:init-value (make-fash #:equal eq?)
+        #:accessor .vars))
 
 (define-record-type <limiter>
   (make-limiter countdown prompt-tag)
@@ -378,6 +376,8 @@
   (limiter-decrement! limiter cost)
   (when (limiter-hit? limiter)
     (limiter-abort-to-prompt limiter program)))
+
+(define %the-nothing (cons '*the* '*nothing*))
 
 (define* (run-program program
                       #:key (limit 10000) (env *default-gush-env*)
@@ -421,11 +421,20 @@ continuation."
                               (.cost applicable))
                              (loop (run-proc applicable program
                                              limiter)))))
-                        ;; @@: For now this kinda logs symbols we don't
-                        ;;   know, but maybe that isn't the right approach
                         (else
-                         (pk 'unknown-gush-method proc-sym)
-                         (loop program))))
+                         (let* ((var-val (fash-ref (.vars program)
+                                                   proc-sym (const %the-nothing)))
+                                (var-bound? (not (eq? var-val %the-nothing))))
+                           (if var-bound?
+                               ;; Put the variable's value on the exec stack
+                               (loop (clone program
+                                            ((.exec) (cons var-val
+                                                           (.exec program)))))
+                               ;; We haven't defined this, so put quoted variable
+                               ;; on the values stack
+                               (loop (clone program
+                                            ((.values) (cons proc-sym
+                                                             (.values program))))))))))
                  ;; Unwrap lists to be applied to the exec stack
                  ;; @@: What happens if it's a dotted-list?
                  ((? pair? lst)
