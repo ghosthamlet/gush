@@ -251,6 +251,41 @@
 (define-stack-method (gush:- (x number?) (y number?))
   (- x y))
 
+(define-gush-generic gush:=
+  "(values: x <number>, y <number>) check if X and Y are numerically equivalent"
+  #:sym '=)
+
+(define-stack-method (gush:= (x number?) (y number?))
+  (= x y))
+
+(define-gush-generic gush:<
+  "(values: x <number>, y <number>) check if X is less than Y"
+  #:sym '<)
+
+(define-stack-method (gush:< (x number?) (y number?))
+  (< x y))
+
+(define-gush-generic gush:<=
+  "(values: x <number>, y <number>) check if X is less than or equal to Y"
+  #:sym '<=)
+
+(define-stack-method (gush:<= (x number?) (y number?))
+  (<= x y))
+
+(define-gush-generic gush:>
+  "(values: x <number>, y <number>) check if X is greater than Y"
+  #:sym '>)
+
+(define-stack-method (gush:> (x number?) (y number?))
+  (> x y))
+
+(define-gush-generic gush:>=
+  "(values: x <number>, y <number>) check if X is greater than or equal to Y"
+  #:sym '>=)
+
+(define-stack-method (gush:>= (x number?) (y number?))
+  (>= x y))
+
 (define-gush-generic gush:dup
   "Duplicate the top item on the stack"
   #:sym 'dup)
@@ -292,6 +327,100 @@
                         limiter))
                ;; nothing to do, so just return the program as-is
                (() (values program limiter))))))
+
+;;; Conditionals
+(define gush:if
+  (make <applicable>
+    #:sym 'if
+    #:docstring
+    "Checks if last item on values stack is truthy (ie, not #f).  If so,
+executes top item on exec stack; otherwise execs second item on exec
+stack.  If nothing is on the values stack, this no-ops."
+    #:proc (lambda (applicable program limiter)
+             (match (.values program)
+               ;; no-op if nothing is on the values stack
+               ;; @@: Should we instead execute the truthy or falsey option?
+               ;;   probably not?
+               (() program)
+               ;; if the top item is false, then we execute the second
+               ;; option on the exec stack (by simply preserving it)
+               ((#f rest-vals ...)
+                (match (.exec program)
+                  ;; if there's only one variable on the exec stack
+                  ;; we just pop the #f from the values stack
+                  ;; (but we always clear the exec stack)
+                  ;; @@: For some reason or in (ice-9 match) doesn't want
+                  ;;   to work with this, so... we duplicate it for each
+                  ;;   possible match
+                  (()
+                   (clone program
+                          ((.values) rest-vals)
+                          ((.exec) '())))
+                  ((if-exec)
+                   (clone program
+                          ((.values) rest-vals)
+                          ((.exec) '())))
+                  ;; Whoo, everything we need!  We're going for else-exec!
+                  ((if-exec else-exec rest-exec ...)
+                   (clone program
+                          ((.values) rest-vals)
+                          ((.exec) (cons else-exec rest-exec))))))
+               ;; Otherwise, it must be true!
+               ((truthy-val rest-vals ...)
+                (match (.exec program)
+                  ;; if there's only one variable on the exec stack
+                  ;; or a truthy value, we just pop the truthy value
+                  ;; from the values stack
+                  (()
+                   (clone program
+                          ((.values) rest-vals)))
+                  ((if-exec)
+                   (clone program
+                          ((.values) rest-vals)))
+                  ;; Whoo, everything we need!  We're going for if-exec!
+                  ((if-exec else-exec rest-exec ...)
+                   (clone program
+                          ((.values) rest-vals)
+                          ((.exec) (cons if-exec rest-exec))))))))))
+
+(define gush:when
+  (make <applicable>
+    #:sym 'when
+    #:docstring
+    "Checks if last item on values stack is truthy (ie, not #f).  If so,
+executes top item on exec stack, otherwise drops it.  (There is no else branch
+in when.)"
+    #:proc (lambda (applicable program limiter)
+             (match (.values program)
+               ;; no-op if nothing is on the values stack
+               (() program)
+               ;; if the top item is false, then we remove the top exec
+               ;; item
+               ((#f rest-vals ...)
+                (match (.exec program)
+                  ;; If there's nothing on the stack, just pop
+                  ;; #f from the values stack
+                  (()
+                   (clone program
+                          ((.values) rest-vals)))
+                  ;; if there's only one variable on the exec stack
+                  ;; we just pop the #f from the values stack
+                  ((if-exec)
+                   (clone program
+                          ((.values) rest-vals)
+                          ((.exec) '())))
+                  ;; If there are multiple items, we drop the if
+                  ((if-exec rest-exec ...)
+                   (clone program
+                          ((.values) rest-vals)
+                          ((.exec) rest-exec)))))
+               ;; Otherwise, it must be true!
+               ;; And in this case, that means we leave the exec stack
+               ;; as-is (since we're keeping the top item) but we drop
+               ;; the top item from the stack regardless.
+               ((truthy-val rest-vals ...)
+                (clone program ((.values) rest-vals)))))))
+
 
 ;;; Variable operations
 
@@ -417,8 +546,10 @@ erasing any other content previously on the stack"
 
 (define *default-gush-env*
   (make-gush-env gush:+ gush:- gush:* gush:/
+                 gush:= gush:< gush:<= gush:> gush:>=
                  gush:drop gush:dup
                  gush:halt gush:quote
+                 gush:if gush:when
 
                  gush:define gush:forget gush:var-set-stack
                  gush:var-push gush:var-pop gush:var-ref
