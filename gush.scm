@@ -15,14 +15,47 @@
 ;;;; License along with this library; if not, write to the Free Software
 ;;;; Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
-(use-modules (oop goops)
-             (clone)
-             (srfi srfi-1)
-             (srfi srfi-9)
-             (srfi srfi-111)
-             (fash)
-             (ice-9 match)
-             (ice-9 control))
+(define-module (gush)
+  #:use-module (oop goops)
+  #:use-module (clone)
+  #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-9)
+  #:use-module (srfi srfi-111)
+  #:use-module (fash)
+  #:use-module (ice-9 match)
+  #:use-module (ice-9 control)
+  ;; A whole lot more to export...
+  #:export (run run-program
+
+            <operation>
+            .sym .proc .docstring .cost
+
+            <gush-method> gush-method?
+            gush-method-param-preds gush-method-proc
+
+            find-stack-matches
+            <gush-generic> .proc .methods
+
+            define-gush-generic
+            stack-method define-stack-method
+            program-method define-program-method
+
+            op:+ op:- op:* op:/
+            op:= op:< op:<= op:> op:>=
+            op:drop op:dup
+            op:halt op:quote
+            op:if op:when
+
+            op:define op:forget op:var-set-stack
+            op:var-push op:var-pop op:var-ref
+            op:var-quote-pop op:var-quote-ref op:var-quote-stack
+
+            *default-gush-env*
+
+            <program>
+            .code .exec .values .vars
+
+            run-program run))
 
 
 ;;; The limiter
