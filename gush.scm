@@ -56,11 +56,11 @@
 
 ;; Abstract "procedure" to operate on a stack.
 ;; (Generics are a specialization of this.)
-(define-class <applicable> ()
+(define-class <operation> ()
   ;; What "symbol" this maps to in gush code
   (sym #:accessor .sym
        #:init-keyword #:sym)
-  ;; Procedure to run... (applicable, program, limiter) -> (program, limiter)
+  ;; Procedure to run... (operation, program, limiter) -> (program, limiter)
   (proc #:init-keyword #:proc
         #:accessor .proc)
   ;; Optional docstring
@@ -141,7 +141,7 @@
      ;; We didn't find anything...
      (values program limiter))))
 
-(define-class <gush-generic> (<applicable>)
+(define-class <gush-generic> (<operation>)
   ;; We use gush-generic-apply as a very specific meta-procedure
   ;; for generics
   (proc #:accessor .proc
@@ -207,12 +207,12 @@
 
 
 ;;; Environment stuff
-(define (make-gush-env . applicables)
+(define (make-gush-env . operations)
   (let ((env (make-hash-table)))
-    (for-each (lambda (applicable)
-                (hashq-set! env (.sym applicable)
-                            applicable))
-              applicables)
+    (for-each (lambda (operation)
+                (hashq-set! env (.sym operation)
+                            operation))
+              operations)
     env))
 
 (define-inlinable (gush-env-get-proc gush-env sym)
@@ -223,100 +223,100 @@
 
 (define anything? (const #t))
 
-(define-gush-generic gush:+
+(define-gush-generic op:+
   "Add two numbers on the stack"
   #:sym '+)
 
-(define-stack-method (gush:+ (x number?) (y number?))
+(define-stack-method (op:+ (x number?) (y number?))
   (+ x y))
 
-(define-gush-generic gush:*
+(define-gush-generic op:*
   "Multiply two numbers on the stack"
   #:sym '*)
 
-(define-stack-method (gush:* (x number?) (y number?))
+(define-stack-method (op:* (x number?) (y number?))
   (* x y))
 
-(define-gush-generic gush:/
+(define-gush-generic op:/
   "Divide two numbers on the stack"
   #:sym '/)
 
-(define-stack-method (gush:/ (x number?) (y number?))
+(define-stack-method (op:/ (x number?) (y number?))
   (/ x y))
 
-(define-gush-generic gush:-
+(define-gush-generic op:-
   "Subtract two numbers on the stack"
   #:sym '-)
 
-(define-stack-method (gush:- (x number?) (y number?))
+(define-stack-method (op:- (x number?) (y number?))
   (- x y))
 
-(define-gush-generic gush:=
+(define-gush-generic op:=
   "(values: x <number>, y <number>) check if X and Y are numerically equivalent"
   #:sym '=)
 
-(define-stack-method (gush:= (x number?) (y number?))
+(define-stack-method (op:= (x number?) (y number?))
   (= x y))
 
-(define-gush-generic gush:<
+(define-gush-generic op:<
   "(values: x <number>, y <number>) check if X is less than Y"
   #:sym '<)
 
-(define-stack-method (gush:< (x number?) (y number?))
+(define-stack-method (op:< (x number?) (y number?))
   (< x y))
 
-(define-gush-generic gush:<=
+(define-gush-generic op:<=
   "(values: x <number>, y <number>) check if X is less than or equal to Y"
   #:sym '<=)
 
-(define-stack-method (gush:<= (x number?) (y number?))
+(define-stack-method (op:<= (x number?) (y number?))
   (<= x y))
 
-(define-gush-generic gush:>
+(define-gush-generic op:>
   "(values: x <number>, y <number>) check if X is greater than Y"
   #:sym '>)
 
-(define-stack-method (gush:> (x number?) (y number?))
+(define-stack-method (op:> (x number?) (y number?))
   (> x y))
 
-(define-gush-generic gush:>=
+(define-gush-generic op:>=
   "(values: x <number>, y <number>) check if X is greater than or equal to Y"
   #:sym '>=)
 
-(define-stack-method (gush:>= (x number?) (y number?))
+(define-stack-method (op:>= (x number?) (y number?))
   (>= x y))
 
-(define-gush-generic gush:dup
+(define-gush-generic op:dup
   "Duplicate the top item on the stack"
   #:sym 'dup)
 
-(define-stack-method (gush:dup (var anything?))
+(define-stack-method (op:dup (var anything?))
   (values var var))
 
-(define-gush-generic gush:drop
+(define-gush-generic op:drop
   "Drop the top item on the stack"
   #:sym 'drop)
 
-(define-stack-method (gush:drop (var anything?))
+(define-stack-method (op:drop (var anything?))
   (values))
 
 ;; @@: Dangerous?  Equiv to EXEC.FLUSH in Push anyway
-(define gush:halt
-  (make <applicable>
+(define op:halt
+  (make <operation>
     #:sym 'halt
     #:cost 0
     #:docstring "Stop the program completely by wiping the exec stack."
-    #:proc (lambda (applicable program limiter)
+    #:proc (lambda (operation program limiter)
              (values (clone program ((.exec) '()))
                      limiter))))
 
 ;; Memory things
-(define gush:quote
-  (make <applicable>
+(define op:quote
+  (make <operation>
     #:sym 'quote
     #:docstring
     "Push the next item from the exec stack onto the value stack, without applying."
-    #:proc (lambda (applicable program limiter)
+    #:proc (lambda (operation program limiter)
              (match (.exec program)
                ;; Quote the item as-is onto the values stack
                ((exec-item exec-rest ...)
@@ -329,14 +329,14 @@
                (() (values program limiter))))))
 
 ;;; Conditionals
-(define gush:if
-  (make <applicable>
+(define op:if
+  (make <operation>
     #:sym 'if
     #:docstring
     "Checks if last item on values stack is truthy (ie, not #f).  If so,
 executes top item on exec stack; otherwise execs second item on exec
 stack.  If nothing is on the values stack, this no-ops."
-    #:proc (lambda (applicable program limiter)
+    #:proc (lambda (operation program limiter)
              (match (.values program)
                ;; no-op if nothing is on the values stack
                ;; @@: Should we instead execute the truthy or falsey option?
@@ -383,14 +383,14 @@ stack.  If nothing is on the values stack, this no-ops."
                           ((.values) rest-vals)
                           ((.exec) (cons if-exec rest-exec))))))))))
 
-(define gush:when
-  (make <applicable>
+(define op:when
+  (make <operation>
     #:sym 'when
     #:docstring
     "Checks if last item on values stack is truthy (ie, not #f).  If so,
 executes top item on exec stack, otherwise drops it.  (There is no else branch
 in when.)"
-    #:proc (lambda (applicable program limiter)
+    #:proc (lambda (operation program limiter)
              (match (.values program)
                ;; no-op if nothing is on the values stack
                (() program)
@@ -424,31 +424,31 @@ in when.)"
 
 ;;; Variable operations
 
-(define-gush-generic gush:define
+(define-gush-generic op:define
   "(values: var <symbol>, val <any>) Set the memory stack of VAR to VAL,
 erasing any other content previously on the stack"
   #:sym 'define)
 
-(define-program-method (gush:define program (var-sym symbol?) (val anything?))
+(define-program-method (op:define program (var-sym symbol?) (val anything?))
   (clone program
          ((.vars)
           (fash-set (.vars program) var-sym (list val)))))
 
-(define-gush-generic gush:forget
+(define-gush-generic op:forget
   "(values: var <symbol>) Forget the value of VAR altogether"
   #:sym 'forget)
 
 ;; @@: Not ideal, we lack a fash-delete
-(define-program-method (gush:forget program (var-sym symbol?))
+(define-program-method (op:forget program (var-sym symbol?))
   (clone program
          ((.vars)
           (fash-set (.vars program) var-sym '()))))
 
-(define-gush-generic gush:var-set-stack
+(define-gush-generic op:var-set-stack
   "(values: var <symbol>, stack <list>) Replace contents of VAR with STACK (a list)"
   #:sym 'var-set-stack)
 
-(define-program-method (gush:var-set-stack program (var-sym symbol?)
+(define-program-method (op:var-set-stack program (var-sym symbol?)
                                            (stack proper-list?))
   (clone program
          ((.vars)
@@ -456,22 +456,22 @@ erasing any other content previously on the stack"
                     stack))))
 
 
-(define-gush-generic gush:var-push
+(define-gush-generic op:var-push
   "(values: var <symbol>, val <any>) Push VAL onto VAR's stack"
   #:sym 'var-push)
 
-(define-program-method (gush:var-push program (var-sym symbol?) (val anything?))
+(define-program-method (op:var-push program (var-sym symbol?) (val anything?))
   (let ((current-var-stack (fash-ref (.vars program) var-sym (const '()))))
     (clone program
            ((.vars)
             (fash-set (.vars program) var-sym
                       (cons val current-var-stack))))))
 
-(define-gush-generic gush:var-pop
+(define-gush-generic op:var-pop
   "(values: var <symbol>) Pop value of VAR from its stack onto the exec stack"
   #:sym 'var-pop)
 
-(define-program-method (gush:var-pop program (var-sym symbol?))
+(define-program-method (op:var-pop program (var-sym symbol?))
   (match (fash-ref (.vars program) var-sym)
     ;; Nothing there, or an empty stack; return program as-is
     ((or #f ()) program)
@@ -483,11 +483,11 @@ erasing any other content previously on the stack"
             ;; Put it on the exec stack
             ((.exec) (cons stack-val (.exec program)))))))
 
-(define-gush-generic gush:var-ref
+(define-gush-generic op:var-ref
   "(values: var <symbol>) Put top value of VAR onto the exec stack"
   #:sym 'var-ref)
 
-(define-program-method (gush:var-ref program (var-sym symbol?))
+(define-program-method (op:var-ref program (var-sym symbol?))
   (match (fash-ref (.vars program) var-sym)
     ;; Nothing there, or an empty stack; return program as-is
     ((or #f ()) program)
@@ -497,11 +497,11 @@ erasing any other content previously on the stack"
             ;; Put it on the exec stack
             ((.exec) (cons stack-val (.exec program)))))))
 
-(define-gush-generic gush:var-quote-pop
+(define-gush-generic op:var-quote-pop
   "(values: var <symbol>) Pop value of VAR from its stack onto the values stack without evaluating"
   #:sym 'var-quote-pop)
 
-(define-program-method (gush:var-quote-pop program (var-sym symbol?))
+(define-program-method (op:var-quote-pop program (var-sym symbol?))
   (match (fash-ref (.vars program) var-sym)
     ;; Nothing there, or an empty stack; return program as-is
     ((or #f ()) program)
@@ -513,11 +513,11 @@ erasing any other content previously on the stack"
             ;; Put it on the vals stack
             ((.values) (cons stack-val (.values program)))))))
 
-(define-gush-generic gush:var-quote-ref
+(define-gush-generic op:var-quote-ref
   "(values: var <symbol>) Put top value of VAR onto the values stack without evaluating"
   #:sym 'var-quote-ref)
 
-(define-program-method (gush:var-quote-ref program (var-sym symbol?))
+(define-program-method (op:var-quote-ref program (var-sym symbol?))
   (match (fash-ref (.vars program) var-sym)
     ;; Nothing there, or an empty stack; return program as-is
     ((or #f ()) program)
@@ -530,11 +530,11 @@ erasing any other content previously on the stack"
 ;; @@: Why no var-stack but a var-quote-stack?  Referencing a defined
 ;;   variable does what var-stack would do anyway!
 
-(define-gush-generic gush:var-quote-stack
+(define-gush-generic op:var-quote-stack
   "(values: var <symbol>) Put entire contents of VAR onto the values stack without evaluating"
   #:sym 'var-quote-stack)
 
-(define-program-method (gush:var-quote-stack program (var-sym symbol?))
+(define-program-method (op:var-quote-stack program (var-sym symbol?))
   (match (fash-ref (.vars program) var-sym)
     ;; Nothing there, or an empty stack; return program as-is
     ((or #f ()) program)
@@ -545,15 +545,15 @@ erasing any other content previously on the stack"
             ((.values) (cons stack (.values program)))))))
 
 (define *default-gush-env*
-  (make-gush-env gush:+ gush:- gush:* gush:/
-                 gush:= gush:< gush:<= gush:> gush:>=
-                 gush:drop gush:dup
-                 gush:halt gush:quote
-                 gush:if gush:when
+  (make-gush-env op:+ op:- op:* op:/
+                 op:= op:< op:<= op:> op:>=
+                 op:drop op:dup
+                 op:halt op:quote
+                 op:if op:when
 
-                 gush:define gush:forget gush:var-set-stack
-                 gush:var-push gush:var-pop gush:var-ref
-                 gush:var-quote-pop gush:var-quote-ref gush:var-quote-stack))
+                 op:define op:forget op:var-set-stack
+                 op:var-push op:var-pop op:var-ref
+                 op:var-quote-pop op:var-quote-ref op:var-quote-stack))
 
 
 
@@ -610,12 +610,12 @@ continuation."
                  ;; A symbol? We treat that as a core procedure...
                  ((? symbol? proc-sym)
                   (cond ((gush-env-get-proc env proc-sym) =>
-                         (lambda (applicable)
-                           (let ((run-proc (.proc applicable)))
+                         (lambda (operation)
+                           (let ((run-proc (.proc operation)))
                              (limiter-decrement-maybe-abort!
                               limiter program
-                              (.cost applicable))
-                             (loop (run-proc applicable program
+                              (.cost operation))
+                             (loop (run-proc operation program
                                              limiter)))))
                         (else
                          ;; Insert a variable onto the exec stack if appropriate.
