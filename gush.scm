@@ -25,6 +25,32 @@
              (ice-9 control))
 
 
+;;; The limiter
+;;; ===========
+
+(define-record-type <limiter>
+  (make-limiter countdown prompt-tag)
+  limiter?
+  (countdown limiter-countdown set-limiter-countdown!)
+  (prompt-tag limiter-prompt-tag))
+
+(define* (limiter-decrement! limiter #:optional (cost 1))
+  (when limiter
+    (set-limiter-countdown! limiter (- (limiter-countdown limiter) cost))))
+
+(define* (limiter-hit? limiter)
+  (and limiter (negative? (limiter-countdown limiter))))
+
+(define (limiter-abort-to-prompt limiter program)
+  (abort-to-prompt (limiter-prompt-tag limiter) program limiter))
+
+(define* (limiter-decrement-maybe-abort! limiter program
+                                         #:optional (cost 1))
+  (limiter-decrement! limiter cost)
+  (when (limiter-hit? limiter)
+    (limiter-abort-to-prompt limiter program)))
+
+
 ;;; Procedures, generics, and environments
 ;;; ======================================
 
@@ -172,11 +198,11 @@
                      (lambda (program param ...)
                        body ...)))
 
-(define-syntax-rule (define-program-method (generic (param pred) ...)
+(define-syntax-rule (define-program-method (generic program (param pred) ...)
                       body ...)
   "Append a gush method to the generic SYM"
   (set! (.methods generic)
-        (cons (program-method ((param pred) ...) body ...)
+        (cons (program-method (program (param pred) ...) body ...)
               (.methods generic))))
 
 
@@ -194,6 +220,8 @@
 
 
 ;; Some example methods
+
+(define anything? (const #t))
 
 (define-gush-generic gush:+
   "Add two numbers on the stack"
@@ -227,14 +255,14 @@
   "Duplicate the top item on the stack"
   #:sym 'dup)
 
-(define-stack-method (gush:dup (var (const #t)))
+(define-stack-method (gush:dup (var anything?))
   (values var var))
 
 (define-gush-generic gush:drop
   "Drop the top item on the stack"
   #:sym 'drop)
 
-(define-stack-method (gush:drop (var (const #t)))
+(define-stack-method (gush:drop (var anything?))
   (values))
 
 ;; @@: Dangerous?  Equiv to EXEC.FLUSH in Push anyway
@@ -265,75 +293,136 @@
                ;; nothing to do, so just return the program as-is
                (() (values program limiter))))))
 
-;;; Memory operations
+;;; Variable operations
 
-(define gush:define
-  (make <applicable>
-    #:sym 'define
-    #:docstring "(values: var <symbol>, val <any>) Set the memory stack of VAR to VAL, erasing any other content previously on the stack"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+(define-gush-generic gush:define
+  "(values: var <symbol>, val <any>) Set the memory stack of VAR to VAL,
+erasing any other content previously on the stack"
+  #:sym 'define)
 
-(define gush:forget
-  (make <applicable>
-    #:sym 'forget
-    #:docstring "(values: var <symbol>) Forget the value of VAR altogether"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+(define-program-method (gush:define program (var-sym symbol?) (val anything?))
+  (clone program
+         ((.vars)
+          (fash-set (.vars program) var-sym (list val)))))
 
-(define gush:var-set-stack
-  (make <applicable>
-    #:sym 'var-set-stack
-    #:docstring "(values: var <symbol>, stack <list>) Replace contents of VAR with stack STACK (a list)"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+(define-gush-generic gush:forget
+  "(values: var <symbol>) Forget the value of VAR altogether"
+  #:sym 'forget)
 
-(define gush:var-push
-  (make <applicable>
-    #:sym 'var-push
-    #:docstring "(values: var <symbol>, val <any>) Push VAL onto VAR"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+;; @@: Not ideal, we lack a fash-delete
+(define-program-method (gush:forget program (var-sym symbol?))
+  (clone program
+         ((.vars)
+          (fash-set (.vars program) var-sym '()))))
 
-(define gush:var-pop
-  (make <applicable>
-    #:sym 'var-pop
-    #:docstring "(values: var <symbol>) Pop value of VAR from its stack onto the exec stack"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+(define-gush-generic gush:var-set-stack
+  "(values: var <symbol>, stack <list>) Replace contents of VAR with STACK (a list)"
+  #:sym 'var-set-stack)
 
-(define gush:var-ref
-  (make <applicable>
-    #:sym 'var-ref
-    #:docstring "(values: var <symbol>) Put top value of VAR onto the exec stack"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+(define-program-method (gush:var-set-stack program (var-sym symbol?)
+                                           (stack proper-list?))
+  (clone program
+         ((.vars)
+          (fash-set (.vars program) var-sym
+                    stack))))
 
-(define gush:var-quote-pop
-  (make <applicable>
-    #:sym 'var-quote-pop
-    #:docstring "(values: var <symbol>) Pop value of VAR from its stack onto the values stack without evaluating"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
 
-(define gush:var-quote-ref
-  (make <applicable>
-    #:sym 'var-quote-pop
-    #:docstring "(values: var <symbol>) Put top value of VAR onto the values stack without evaluating"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+(define-gush-generic gush:var-push
+  "(values: var <symbol>, val <any>) Push VAL onto VAR's stack"
+  #:sym 'var-push)
 
-(define gush:var-quote-stack
-  (make <applicable>
-    #:sym 'var-quote-pop
-    #:docstring "(values: var <symbol>) Put entire contents of VAR onto the values stack without evaluating"
-    #:proc (lambda (applicable program limiter)
-             'TODO)))
+(define-program-method (gush:var-push program (var-sym symbol?) (val anything?))
+  (let ((current-var-stack (fash-ref (.vars program) var-sym (const '()))))
+    (clone program
+           ((.vars)
+            (fash-set (.vars program) var-sym
+                      (cons val current-var-stack))))))
+
+(define-gush-generic gush:var-pop
+  "(values: var <symbol>) Pop value of VAR from its stack onto the exec stack"
+  #:sym 'var-pop)
+
+(define-program-method (gush:var-pop program (var-sym symbol?))
+  (match (fash-ref (.vars program) var-sym)
+    ;; Nothing there, or an empty stack; return program as-is
+    ((or #f ()) program)
+    ;; Otherwise, pull first value off the stack
+    ((stack-val rest-stack ...)
+     (clone program
+            ;; Pop item off of the vars stack
+            ((.vars) rest-stack)
+            ;; Put it on the exec stack
+            ((.exec) (cons stack-val (.exec program)))))))
+
+(define-gush-generic gush:var-ref
+  "(values: var <symbol>) Put top value of VAR onto the exec stack"
+  #:sym 'var-ref)
+
+(define-program-method (gush:var-ref program (var-sym symbol?))
+  (match (fash-ref (.vars program) var-sym)
+    ;; Nothing there, or an empty stack; return program as-is
+    ((or #f ()) program)
+    ;; Otherwise, reference first value from stack
+    ((stack-val rest-stack ...)
+     (clone program
+            ;; Put it on the exec stack
+            ((.exec) (cons stack-val (.exec program)))))))
+
+(define-gush-generic gush:var-quote-pop
+  "(values: var <symbol>) Pop value of VAR from its stack onto the values stack without evaluating"
+  #:sym 'var-quote-pop)
+
+(define-program-method (gush:var-quote-pop program (var-sym symbol?))
+  (match (fash-ref (.vars program) var-sym)
+    ;; Nothing there, or an empty stack; return program as-is
+    ((or #f ()) program)
+    ;; Otherwise, pull first value off the stack
+    ((stack-val rest-stack ...)
+     (clone program
+            ;; Pop item off of the vars stack
+            ((.vars) rest-stack)
+            ;; Put it on the vals stack
+            ((.values) (cons stack-val (.values program)))))))
+
+(define-gush-generic gush:var-quote-ref
+  "(values: var <symbol>) Put top value of VAR onto the values stack without evaluating"
+  #:sym 'var-quote-ref)
+
+(define-program-method (gush:var-quote-ref program (var-sym symbol?))
+  (match (fash-ref (.vars program) var-sym)
+    ;; Nothing there, or an empty stack; return program as-is
+    ((or #f ()) program)
+    ;; Otherwise, reference first value from stack
+    ((stack-val rest-stack ...)
+     (clone program
+            ;; Put it on the vals stack
+            ((.values) (cons stack-val (.values program)))))))
+
+;; @@: Why no var-stack but a var-quote-stack?  Referencing a defined
+;;   variable does what var-stack would do anyway!
+
+(define-gush-generic gush:var-quote-stack
+  "(values: var <symbol>) Put entire contents of VAR onto the values stack without evaluating"
+  #:sym 'var-quote-stack)
+
+(define-program-method (gush:var-quote-stack program (var-sym symbol?))
+  (match (fash-ref (.vars program) var-sym)
+    ;; Nothing there, or an empty stack; return program as-is
+    ((or #f ()) program)
+    ;; Otherwise, reference the entire stack
+    (stack
+     (clone program
+            ;; Put it on the vals stack
+            ((.values) (cons stack (.values program)))))))
 
 (define *default-gush-env*
   (make-gush-env gush:+ gush:- gush:* gush:/
                  gush:drop gush:dup
-                 gush:halt gush:quote))
+                 gush:halt gush:quote
+
+                 gush:define gush:forget gush:var-set-stack
+                 gush:var-push gush:var-pop gush:var-ref
+                 gush:var-quote-pop gush:var-quote-ref gush:var-quote-stack))
 
 
 
@@ -354,30 +443,6 @@
   ;; vars is a mapping of keywords -> stacks
   (vars #:init-value (make-fash #:equal eq?)
         #:accessor .vars))
-
-(define-record-type <limiter>
-  (make-limiter countdown prompt-tag)
-  limiter?
-  (countdown limiter-countdown set-limiter-countdown!)
-  (prompt-tag limiter-prompt-tag))
-
-(define* (limiter-decrement! limiter #:optional (cost 1))
-  (when limiter
-    (set-limiter-countdown! limiter (- (limiter-countdown limiter) cost))))
-
-(define* (limiter-hit? limiter)
-  (and limiter (negative? (limiter-countdown limiter))))
-
-(define (limiter-abort-to-prompt limiter program)
-  (abort-to-prompt (limiter-prompt-tag limiter) program limiter))
-
-(define* (limiter-decrement-maybe-abort! limiter program
-                                         #:optional (cost 1))
-  (limiter-decrement! limiter cost)
-  (when (limiter-hit? limiter)
-    (limiter-abort-to-prompt limiter program)))
-
-(define %the-nothing (cons '*the* '*nothing*))
 
 (define* (run-program program
                       #:key (limit 10000) (env *default-gush-env*)
@@ -422,10 +487,13 @@ continuation."
                              (loop (run-proc applicable program
                                              limiter)))))
                         (else
+                         ;; Insert a variable onto the exec stack if appropriate.
+                         ;; Note that variables are themselves stacks, so the default
+                         ;; fash-ref value of #f is fine even, since the "value" of #f
+                         ;; would be '(#f)
                          (let* ((var-val (fash-ref (.vars program)
-                                                   proc-sym (const %the-nothing)))
-                                (var-bound? (not (eq? var-val %the-nothing))))
-                           (if var-bound?
+                                                   proc-sym)))
+                           (if var-val
                                ;; Put the variable's value on the exec stack
                                (loop (clone program
                                             ((.exec) (cons var-val
@@ -436,8 +504,7 @@ continuation."
                                             ((.values) (cons proc-sym
                                                              (.values program))))))))))
                  ;; Unwrap lists to be applied to the exec stack
-                 ;; @@: What happens if it's a dotted-list?
-                 ((? pair? lst)
+                 ((? proper-list? lst)
                   (limiter-decrement-maybe-abort! limiter program)
                   (loop (clone program
                                ((.exec) (append lst (.exec program))))))
