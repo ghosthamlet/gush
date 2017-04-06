@@ -15,3 +15,8 @@ keeping relevant types near the type during operations.)
 Gush also aims to implement a type of "memory", so that processes
 can remember some details about their prior runs, and eventually,
 might even teach their children based off of their own memories.
+
+* Help I need more background or some kind of tutorial
+
+[[https://dustycloud.org/blog/gush-intro/][Here's a blogpost!]]
+Hopefully a real manual will exist for Gush eventually.
